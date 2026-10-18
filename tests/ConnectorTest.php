@@ -1,7 +1,13 @@
 <?php
 
+use Illuminate\Mail\Events\MessageSent;
+use Illuminate\Mail\SentMessage;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Mailer\Envelope;
+use Symfony\Component\Mime\Address;
+use Symfony\Component\Mime\Email;
+use TraceBeat\Laravel\Mail\MailCapture;
 
 it('registers the four commands', function () {
     $commands = array_keys(Artisan::all());
@@ -55,4 +61,45 @@ it('publishes the config and writes the env lines', function () {
         ->and(File::get(config_path('nightwatch.php')))->toContain("env('TRACEBEAT_TOKEN'");
 
     File::delete([$env, config_path('nightwatch.php')]);
+});
+
+it('sends the mail content to TraceBeat after the response', function () {
+    Http::fake(['*' => Http::response(['stored' => true], 202)]);
+    config(['tracebeat.capture_mail' => true]);
+
+    $message = (new Email)->from('hello@app.test')->to(new Address('jane@example.com', 'Jane'))->subject('Welcome')->html('<h1>Hi</h1>')->text('Hi')->attach('terms', 'terms.txt', 'text/plain');
+    event(new MessageSent(new SentMessage(new Symfony\Component\Mailer\SentMessage($message, Envelope::create($message))), ['mailer' => 'smtp', '__laravel_mailable' => 'App\\Mail\\Welcome']));
+
+    Http::assertNothingSent();
+    app()->terminate();
+
+    Http::assertSent(function ($request) {
+        $body = $request->data();
+
+        return $request->url() === 'https://tracebeat.example.test/api/mail-content'
+            && $request->hasHeader('Authorization', 'Bearer token-abc')
+            && $body['subject'] === 'Welcome'
+            && $body['html'] === '<h1>Hi</h1>'
+            && $body['to'][0]['address'] === 'jane@example.com'
+            && $body['class'] === 'App\\Mail\\Welcome'
+            && $body['attachments'][0]['name'] === 'terms.txt';
+    });
+});
+
+it('does nothing when mail capture is off, and lets an application redact', function () {
+    Http::fake();
+    config(['tracebeat.capture_mail' => false]);
+    $message = (new Email)->from('a@b.test')->to('c@d.test')->subject('S')->text('t');
+    $sent = new SentMessage(new Symfony\Component\Mailer\SentMessage($message, Envelope::create($message)));
+
+    event(new MessageSent($sent, []));
+    app()->terminate();
+    Http::assertNothingSent();
+
+    config(['tracebeat.capture_mail' => true]);
+    MailCapture::redactUsing(fn (array $payload) => null);
+    event(new MessageSent($sent, []));
+    app()->terminate();
+    Http::assertNothingSent();
+    MailCapture::forgetRedactor();
 });

@@ -2,11 +2,14 @@
 
 namespace TraceBeat\Laravel;
 
+use Illuminate\Mail\Events\MessageSent;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use TraceBeat\Laravel\Console\AgentCommand;
 use TraceBeat\Laravel\Console\DeployCommand;
 use TraceBeat\Laravel\Console\InstallCommand;
 use TraceBeat\Laravel\Console\StatusCommand;
+use TraceBeat\Laravel\Mail\MailCapture;
 
 class TraceBeatServiceProvider extends ServiceProvider
 {
@@ -20,6 +23,8 @@ class TraceBeatServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->exposeBaseUrl();
+
+        Event::listen(MessageSent::class, [MailCapture::class, 'handle']);
 
         if (! $this->app->runningInConsole()) {
             return;
